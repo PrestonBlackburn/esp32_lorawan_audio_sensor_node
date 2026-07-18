@@ -1,0 +1,5 @@
+config.h
+config_*.h
+build/**
+dependencies.lock
+.git_old
