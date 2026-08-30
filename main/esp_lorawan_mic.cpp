@@ -31,11 +31,12 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_dsp.h"
+#include "esp_timer.h"
 
 #include <RadioLib.h>
 #include "hal/ESP32S3Hal/Esp32S3Hal.hpp"
 // #include "config.h"
-#include "config_b.h"
+#include "config_a.h"
 
 /* ─────────────────────────────────────────────────────────────────── */
 /*  Pin definitions                                                     */
@@ -49,8 +50,6 @@
 #define RADIO_SCK   (7)
 #define RADIO_MISO  (8)
 #define RADIO_MOSI  (9)
-/* TODO: confirm the real RF-switch GPIO against the hat schematic —
- * see note above about setRfSwitchPins(38, ...) in the original code. */
 #define RADIO_RF_SWITCH_PIN (38)
 
 /* --- ICS-43432 mic (extra castellated pins, unused by the hat) --- */
@@ -58,8 +57,55 @@
 #define GPIO_WS     GPIO_NUM_41   /* LRCL on the breakout */
 #define GPIO_DIN    GPIO_NUM_39   /* DOUT on the breakout -> DIN on the S3 */
 
+/* --- External Status LED ---- */
+#define GPIO_EXT_LED  GPIO_NUM_42 
+/* LED Statuses
+- Solid: device is on and transmitting data
+- Off: device is off
+- Continuous blink: device is on, but not connected to LoraWAN
+*/
+
 static const char *TAG = "app";
 
+/* ─────────────────────────────────────────────────────────────────── */
+/*  LED Control                                                        */
+/* ─────────────────────────────────────────────────────────────────── */
+static esp_timer_handle_t s_led_blink_timer;
+static bool               s_led_blink_state = false;
+
+static void led_blink_callback(void *arg) {
+    s_led_blink_state = !s_led_blink_state;
+    gpio_set_level(GPIO_EXT_LED, s_led_blink_state);
+
+}
+
+static void led_blink_start(void) {
+    esp_timer_create_args_t args = {};
+    args.callback = &led_blink_callback;
+    args.name = "led_blink";
+    ESP_ERROR_CHECK(esp_timer_create(&args, &s_led_blink_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(s_led_blink_timer, 500 * 1000));
+}
+
+static void led_blink_timer_stop_success(void) {
+    esp_timer_stop(s_led_blink_timer);
+    esp_timer_delete(s_led_blink_timer);
+    gpio_set_level(GPIO_EXT_LED, 1);
+}
+
+static void led_startup(void) {
+    gpio_reset_pin(GPIO_EXT_LED); 
+    gpio_set_direction(GPIO_EXT_LED, GPIO_MODE_OUTPUT);
+
+    gpio_set_level(GPIO_EXT_LED, 1); 
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_level(GPIO_EXT_LED, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_level(GPIO_EXT_LED, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_level(GPIO_EXT_LED, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
 /* ─────────────────────────────────────────────────────────────────── */
 /*  Audio / DSP parameters                                              */
 /* ─────────────────────────────────────────────────────────────────── */
@@ -303,6 +349,7 @@ static void lorawan_task(void *arg)
         while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     ESP_LOGI(TAG, "Joined!");
+    led_blink_timer_stop_success();
 
     /* Fix the uplink data rate rather than letting ADR pick one on the
      * fly -- keeps your payload-size budget predictable. */
@@ -389,6 +436,9 @@ static void lorawan_task(void *arg)
 
 extern "C" void app_main(void)
 {
+    led_startup();
+    led_blink_start();
+
     esp_err_t err = gpio_install_isr_service(0);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "GPIO ISR service installation failed");

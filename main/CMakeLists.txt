@@ -4,6 +4,7 @@ idf_component_register(SRCS "esp_lorawan_mic.cpp"
                         driver 
                         esp_driver_i2s 
                         esp_driver_gpio 
+                        esp_timer
                         freertos 
                         esp_ringbuf 
                         esp-dsp
